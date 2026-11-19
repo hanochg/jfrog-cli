@@ -30,7 +30,7 @@ func TestExtractToken(t *testing.T) {
 	for _, raw := range []string{
 		"a.b.c", "  a.b.c\n", "Bearer a.b.c", "bearer a.b.c", `"a.b.c"`, "\ufeffa.b.c\r\n",
 		atcOutput,
-		"\ufeff" + `{"access_token":"a.b.c","reference_token":"cmVmdGtuOjAx"}`,
+		"\ufeff" + `{"access_token":"a.b.c","reference_token":"opaque"}`,
 	} {
 		token, err := extractToken(raw)
 		require.NoError(t, err, raw)
