@@ -3,15 +3,15 @@ package tokenverify
 var Usage = []string{"atv", "atv --token-file=<path>"}
 
 func GetDescription() string {
-	return `Verifies a JFrog access token: checks its format and signature, checks that it has not expired, asks the configured JFrog server whether it is still accepted, and reports its type.`
+	return `Verifies a JFrog access token, JWT or reference. A JWT's signature and expiry are checked locally first. The configured JFrog server is then asked whether it accepts the token, and the token's format and type are reported.`
 }
 
 func GetAIDescription() string {
-	return `Verify a JFrog Platform access token and report what kind of token it is. The token's signature is checked against the configured server's root certificate, its claims and expiry are validated, and the server's Access readiness endpoint is asked whether it still accepts the token.
+	return `Verify a JFrog Platform access token, JWT or reference, and report its format and what kind of token it is. For a JWT, the signature is checked against the configured server's root certificate and the claims and expiry are validated. The server's GET /access/api/v1/tokens/me endpoint is then called with the token, and only a token the server accepts is valid. A value that isn't a JWT is sent to that endpoint as a possible reference token, and its details come from the server.
 
 When to use:
 - Checking whether a token is still valid before using it in CI.
-- Finding out what kind of token you were given (identity, admin, groups, roles, scoped or Connect).
+- Finding out what kind of token you were given: a JWT or a reference token, and its type (identity, admin, groups, roles, scoped or Connect).
 - Debugging authentication failures caused by an expired, revoked or foreign token.
 
 Prerequisites:
@@ -20,6 +20,7 @@ Prerequisites:
 Common patterns:
   $ jf atv                                                 # paste the token at the hidden prompt
   $ jf atc | jf atv                                        # verify a freshly minted token
+  $ jf atc --reference | jq -r .reference_token | jf atv   # verify a reference token
   $ jf atv --token-file=token.txt                          # read the token from a file
   $ jf atv --token-file=token.txt --format=json | jq .types
 
@@ -28,9 +29,11 @@ Gotchas:
 - Without --token-file, the token is read from stdin. In a terminal, it prompts and waits without echoing the input.
 - JSON input is read for its access_token value.
 - Only configured servers can be used. There's no --insecure-tls: trust a private CA by adding it to ~/.jfrog/security/certs. http:// servers work, but print a warning.
-- Reference tokens can't be verified; verify the JWT access token instead.
+- A value that isn't a JWT is treated as a reference token and sent to the server as is. If the server doesn't accept it, it's reported as invalid.
+- JSON input is read for its access_token value, so to verify the reference token from jf atc --reference output, extract reference_token first.
 - Internal tokens are reported as Internal Token, except Connect pairing and device tokens, which are reported by name.
-- The token is sent to the server only after its signature checks out.
+- A JWT is sent to the server only after its signature checks out.
+- --format=json output has a format field: JWT or Reference. For a reference token, the payload is the token details the server returned.
 - The exit code is 1 when the token is invalid. The payload is printed even when the token is invalid.
 
 Related: jf atc, jf eot

@@ -356,6 +356,7 @@ func TestAccessTokenCreate(t *testing.T) {
 type atvOutput struct {
 	Valid   bool                   `json:"valid"`
 	Error   string                 `json:"error"`
+	Format  string                 `json:"format"`
 	Payload map[string]interface{} `json:"payload"`
 	Types   []string               `json:"types"`
 }
@@ -404,6 +405,7 @@ func TestAccessTokenVerify(t *testing.T) {
 	assertValid := func(t *testing.T, result atvOutput, err error, types ...string) {
 		require.NoError(t, err)
 		assert.True(t, result.Valid)
+		assert.Equal(t, "JWT", result.Format)
 		assert.Equal(t, types, result.Types)
 	}
 	assertInvalid := func(t *testing.T, result atvOutput, err error, reason string) {
@@ -452,7 +454,22 @@ func TestAccessTokenVerify(t *testing.T) {
 		created, _ := mint(t, "--reference")
 		require.NotEmpty(t, created.ReferenceToken)
 		result, err := verify(t, created.ReferenceToken)
-		assertInvalid(t, result, err, "not a JWT access token")
+		require.NoError(t, err)
+		assert.True(t, result.Valid)
+		assert.Equal(t, "Reference", result.Format)
+		assert.Equal(t, []string{"Identity Token"}, result.Types)
+		assert.Equal(t, created.TokenId, result.Payload["token_id"])
+	})
+	t.Run("revoked reference token", func(t *testing.T) {
+		created, _ := mintWithoutCleanup(t, "--reference")
+		revokeToken(t, created.TokenId)
+		result, err := verify(t, created.ReferenceToken)
+		assertInvalid(t, result, err, "didn't accept it as a reference token")
+		assert.Empty(t, result.Format)
+	})
+	t.Run("value that isn't a token", func(t *testing.T) {
+		result, err := verify(t, "notATokenValue")
+		assertInvalid(t, result, err, "didn't accept it as a reference token")
 	})
 	t.Run("revoked token", func(t *testing.T) {
 		created, _ := mintWithoutCleanup(t)

@@ -141,7 +141,8 @@ func TestAccessTokenVerifyFlags(t *testing.T) {
 
 func sampleVerifyResult(valid bool) *generic.AccessTokenVerifyResult {
 	return &generic.AccessTokenVerifyResult{
-		Valid: valid,
+		Valid:  valid,
+		Format: generic.TokenFormatJWT,
 		Payload: map[string]interface{}{
 			"jti": "id-1",
 			"sub": "jfac@01h/users/alice",
@@ -159,9 +160,42 @@ func sampleVerifyResult(valid bool) *generic.AccessTokenVerifyResult {
 func TestPrintVerifyResult_Table_Valid(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, printVerifyResult(sampleVerifyResult(true), coreformat.Table, &buf))
-	for _, want := range []string{"FIELD", "sub", "UTC (epoch: 1700000000)", "ext.revocable", "TYPE", "Identity Token"} {
+	assert.True(t, strings.HasPrefix(buf.String(), "FORMAT\nJWT\n\nFIELD"), buf.String())
+	for _, want := range []string{"sub", "UTC (epoch: 1700000000)", "ext.revocable", "TYPE", "Identity Token"} {
 		assert.Contains(t, buf.String(), want)
 	}
+}
+
+func TestPrintVerifyResult_Table_ReferenceToken(t *testing.T) {
+	result := &generic.AccessTokenVerifyResult{
+		Valid:  true,
+		Format: generic.TokenFormatReference,
+		Payload: map[string]interface{}{
+			"token_id":    "id-1",
+			"subject":     "jfac@01h/users/alice",
+			"scope":       "applied-permissions/user",
+			"issuer":      "jfac@01h",
+			"issued_at":   json.Number("1700000000"),
+			"expiry":      json.Number("0"),
+			"last_used":   json.Number("1700000100"),
+			"refreshable": false,
+		},
+		Types: []generic.TokenType{generic.TokenTypeIdentity},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
+	out := buf.String()
+	assert.True(t, strings.HasPrefix(out, "FORMAT\nReference\n\nFIELD"), out)
+	var keys []string
+	for _, line := range strings.Split(out, "\n")[4:12] {
+		keys = append(keys, strings.Fields(line)[0])
+	}
+	assert.Equal(t, []string{"token_id", "subject", "scope", "issuer", "issued_at", "expiry", "last_used", "refreshable"}, keys)
+	assert.Contains(t, out, "2023-11-14 22:13:20 UTC (epoch: 1700000000)")
+	assert.Contains(t, out, "UTC (epoch: 1700000100)")
+	assert.Regexp(t, `expiry\s+0\n`, out)
+	assert.NotContains(t, out, "(no expiry)")
+	assert.Contains(t, out, "TYPE\nIdentity Token")
 }
 
 func TestPrintVerifyResult_Table_NoExpiry(t *testing.T) {
@@ -198,11 +232,13 @@ func TestPrintVerifyResult_JSON(t *testing.T) {
 	require.NoError(t, printVerifyResult(sampleVerifyResult(true), coreformat.Json, &buf))
 	var out struct {
 		Valid   bool                   `json:"valid"`
+		Format  string                 `json:"format"`
 		Types   []string               `json:"types"`
 		Payload map[string]interface{} `json:"payload"`
 	}
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
 	assert.True(t, out.Valid)
+	assert.Equal(t, "JWT", out.Format)
 	assert.Equal(t, []string{"Identity Token"}, out.Types)
 	assert.IsType(t, map[string]interface{}{}, out.Payload["ext"])
 }

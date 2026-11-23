@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,7 +35,11 @@ const (
 	tokenArgumentError = "the token can't be passed as an argument, because arguments are visible to other processes and kept in shell history. Pass it with --token-file=<path> or on stdin"
 )
 
-var orderedClaims = []string{"jti", "sub", "aud", "scp", "iss", "iat", "exp"}
+var (
+	orderedClaims       = []string{"jti", "sub", "aud", "scp", "iss", "iat", "exp"}
+	orderedTokenDetails = []string{"token_id", "subject", "scope", "issuer", "issued_at", "expiry"}
+	epochFields         = map[string]bool{"iat": true, "exp": true, "issued_at": true, "expiry": true, "last_used": true}
+)
 
 func AccessTokenVerifyCmd(c *cli.Context) error {
 	if c.NArg() > 0 {
@@ -226,9 +231,12 @@ func printVerifyTable(result *generic.AccessTokenVerifyResult, w io.Writer) erro
 	if result == nil || result.Payload == nil {
 		return nil
 	}
+	if result.Format != "" {
+		_, _ = fmt.Fprintf(w, "FORMAT\n%s\n\n", result.Format)
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "FIELD\tVALUE")
-	for _, row := range payloadRows(result.Payload) {
+	for _, row := range payloadRows(result.Payload, result.Format) {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\n", escapeControlCharacters(row[0]), escapeControlCharacters(row[1]))
 	}
 	if err := tw.Flush(); err != nil {
@@ -244,25 +252,26 @@ func printVerifyTable(result *generic.AccessTokenVerifyResult, w io.Writer) erro
 	return nil
 }
 
-func payloadRows(payload map[string]interface{}) [][2]string {
+func payloadRows(payload map[string]interface{}, format generic.TokenFormat) [][2]string {
+	ordered := orderedClaims
+	if format == generic.TokenFormatReference {
+		ordered = orderedTokenDetails
+	}
 	var rows [][2]string
-	for _, key := range orderedClaims {
+	for _, key := range ordered {
 		value, ok := payload[key]
 		switch {
 		case key == "exp" && !ok:
 			rows = append(rows, [2]string{key, "(no expiry)"})
-		case !ok:
-		case key == "iat" || key == "exp":
-			rows = append(rows, [2]string{key, formatEpoch(value)})
-		default:
-			rows = append(rows, [2]string{key, formatClaim(value)})
+		case ok:
+			rows = append(rows, [2]string{key, formatValue(key, value)})
 		}
 	}
 	for _, key := range sortedKeys(payload) {
-		if key == "ext" || isOrderedClaim(key) {
+		if key == "ext" || slices.Contains(ordered, key) {
 			continue
 		}
-		rows = append(rows, [2]string{key, formatClaim(payload[key])})
+		rows = append(rows, [2]string{key, formatValue(key, payload[key])})
 	}
 	if ext, ok := payload["ext"].(map[string]interface{}); ok {
 		for _, key := range sortedKeys(ext) {
@@ -286,9 +295,16 @@ func escapeControlCharacters(s string) string {
 	return b.String()
 }
 
+func formatValue(key string, value interface{}) string {
+	if epochFields[key] {
+		return formatEpoch(value)
+	}
+	return formatClaim(value)
+}
+
 func formatEpoch(value interface{}) string {
 	epoch, err := strconv.ParseInt(fmt.Sprint(value), 10, 64)
-	if err != nil {
+	if err != nil || epoch <= 0 {
 		return formatClaim(value)
 	}
 	return fmt.Sprintf("%s (epoch: %d)", time.Unix(epoch, 0).UTC().Format("2006-01-02 15:04:05 UTC"), epoch)
@@ -309,15 +325,6 @@ func formatClaim(value interface{}) string {
 		}
 	}
 	return fmt.Sprint(value)
-}
-
-func isOrderedClaim(key string) bool {
-	for _, claim := range orderedClaims {
-		if claim == key {
-			return true
-		}
-	}
-	return false
 }
 
 func sortedKeys(m map[string]interface{}) []string {
