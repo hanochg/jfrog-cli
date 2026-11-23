@@ -11,7 +11,7 @@ func GetAIDescription() string {
 
 When to use:
 - Checking whether a token is still valid before using it in CI.
-- Finding out what kind of token you were given: a JWT or a reference token, and its type (identity, admin, groups, roles, scoped or Connect).
+- Finding out what kind of token you were given: a JWT or a reference token, and its types (identity, admin, groups, roles, entitlements, scoped, internal or Connect).
 - Debugging authentication failures caused by an expired, revoked or foreign token.
 
 Prerequisites:
@@ -31,7 +31,8 @@ Gotchas:
 - Only configured servers can be used. There's no --insecure-tls: trust a private CA by adding it to ~/.jfrog/security/certs. http:// servers work, but print a warning.
 - A value that isn't a JWT is treated as a reference token and sent to the server as is. If the server doesn't accept it, it's reported as invalid.
 - JSON input is read for its access_token value, so to verify the reference token from jf atc --reference output, extract reference_token first.
-- Internal tokens are reported as Internal Token, except Connect pairing and device tokens, which are reported by name.
+- The types come from the token's scopes only, one per kind of scope, so a token can have several. Quoted scopes and the legacy member-of-groups: and api:* scopes are recognized.
+- A token is internal when it has a scope starting with internal:. Connect pairing and device scopes are reported by name, and every other internal: scope as Internal Token, next to the token's other types.
 - A JWT is sent to the server only after its signature checks out.
 - --format=json output has a format field: JWT or Reference. For a reference token, the payload is the token details the server returned.
 - The exit code is 1 when the token is invalid. The payload is printed even when the token is invalid.
