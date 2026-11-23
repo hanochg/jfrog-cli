@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/jfrog/jfrog-client-go/utils/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli"
 )
 
 type untouchedReader struct{ t *testing.T }
@@ -67,26 +69,19 @@ func TestReadTokenInput(t *testing.T) {
 	tokenFile := filepath.Join(dir, "token.txt")
 	require.NoError(t, os.WriteFile(tokenFile, []byte("x\n"), 0o600))
 
-	raw, err := readTokenInput([]string{"a.b.c"}, "", false, untouchedReader{t}, failTerminal)
-	require.NoError(t, err)
-	assert.Equal(t, "a.b.c", raw)
-
-	raw, err = readTokenInput(nil, tokenFile, true, untouchedReader{t}, failTerminal)
+	raw, err := readTokenInput(tokenFile, true, untouchedReader{t}, failTerminal)
 	require.NoError(t, err)
 	assert.Equal(t, "x\n", raw)
 
-	_, err = readTokenInput([]string{"a.b.c"}, tokenFile, true, untouchedReader{t}, failTerminal)
-	assert.EqualError(t, err, "provide the token either as an argument or with --token-file, not both")
-
-	_, err = readTokenInput(nil, "missing.txt", true, untouchedReader{t}, failTerminal)
+	_, err = readTokenInput("missing.txt", true, untouchedReader{t}, failTerminal)
 	assert.ErrorContains(t, err, "failed to read token file 'missing.txt'")
 
-	raw, err = readTokenInput(nil, "", false, strings.NewReader("a.b.c\n"), nil)
+	raw, err = readTokenInput("", false, strings.NewReader("a.b.c\n"), nil)
 	require.NoError(t, err)
 	assert.Equal(t, "a.b.c\n", raw)
 
 	var gotPrompt string
-	raw, err = readTokenInput(nil, "", false, untouchedReader{t}, func(prompt string) (string, error) {
+	raw, err = readTokenInput("", false, untouchedReader{t}, func(prompt string) (string, error) {
 		gotPrompt = prompt
 		return "a.b.c", nil
 	})
@@ -94,15 +89,20 @@ func TestReadTokenInput(t *testing.T) {
 	assert.Equal(t, "a.b.c", raw)
 	assert.Equal(t, stdinPrompt, gotPrompt)
 
-	_, err = readTokenInput(nil, "", false, strings.NewReader(strings.Repeat("x", 64*1024+1)), nil)
+	_, err = readTokenInput("", false, strings.NewReader(strings.Repeat("x", 64*1024+1)), nil)
 	assert.EqualError(t, err, "the token input is larger than 64 KiB")
 
-	for _, args := range [][]string{{""}, {"   "}} {
-		_, err = readTokenInput(args, "", false, untouchedReader{t}, failTerminal)
-		assert.EqualError(t, err, "no token provided: the token argument is empty")
-	}
-	_, err = readTokenInput(nil, "", true, untouchedReader{t}, failTerminal)
+	_, err = readTokenInput("", true, untouchedReader{t}, failTerminal)
 	assert.EqualError(t, err, "no token provided: the --token-file path is empty")
+}
+
+func TestAccessTokenVerifyCmd_RejectsTokenArgument(t *testing.T) {
+	for _, args := range [][]string{{"a.b.c"}, {""}, {"a.b.c", "d.e.f"}} {
+		set := flag.NewFlagSet("atv", flag.ContinueOnError)
+		require.NoError(t, set.Parse(args))
+		err := AccessTokenVerifyCmd(cli.NewContext(nil, set, nil))
+		assert.EqualError(t, err, tokenArgumentError, args)
+	}
 }
 
 func TestVerifyServerDetails(t *testing.T) {

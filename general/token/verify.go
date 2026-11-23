@@ -28,16 +28,17 @@ import (
 )
 
 const (
-	stdinPrompt   = "Reading the access token from stdin. Paste it and press Enter (input is hidden): "
-	maxTokenInput = 64 * 1024
-	utf8Bom       = "\xef\xbb\xbf"
+	stdinPrompt        = "Reading the access token from stdin. Paste it and press Enter (input is hidden): "
+	maxTokenInput      = 64 * 1024
+	utf8Bom            = "\xef\xbb\xbf"
+	tokenArgumentError = "the token can't be passed as an argument, because arguments are visible to other processes and kept in shell history. Pass it with --token-file=<path> or on stdin"
 )
 
 var orderedClaims = []string{"jti", "sub", "aud", "scp", "iss", "iat", "exp"}
 
 func AccessTokenVerifyCmd(c *cli.Context) error {
-	if c.NArg() > 1 {
-		return cliutils.WrongNumberOfArgumentsHandler(c)
+	if c.NArg() > 0 {
+		return errorutils.CheckErrorf(tokenArgumentError)
 	}
 	outputFormat, err := commonCliUtils.GetOutputFormat(c, coreformat.Table)
 	if err != nil {
@@ -54,7 +55,7 @@ func AccessTokenVerifyCmd(c *cli.Context) error {
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		readTerminal = readHiddenLine
 	}
-	raw, err := readTokenInput(c.Args(), c.String(cliutils.TokenFile), c.IsSet(cliutils.TokenFile), os.Stdin, readTerminal)
+	raw, err := readTokenInput(c.String(cliutils.TokenFile), c.IsSet(cliutils.TokenFile), os.Stdin, readTerminal)
 	if err != nil {
 		return err
 	}
@@ -87,14 +88,8 @@ func verifyServerDetails(serverIdFlag string) (*coreConfig.ServerDetails, error)
 	return commands.GetConfig(serverId, true)
 }
 
-func readTokenInput(args []string, tokenFile string, tokenFileSet bool, stdin io.Reader, readTerminal func(prompt string) (string, error)) (string, error) {
+func readTokenInput(tokenFile string, tokenFileSet bool, stdin io.Reader, readTerminal func(prompt string) (string, error)) (string, error) {
 	switch {
-	case len(args) > 0 && tokenFileSet:
-		return "", errorutils.CheckErrorf("provide the token either as an argument or with --token-file, not both")
-	case len(args) > 0 && strings.TrimSpace(args[0]) == "":
-		return "", errorutils.CheckErrorf("no token provided: the token argument is empty")
-	case len(args) > 0:
-		return args[0], nil
 	case tokenFileSet && strings.TrimSpace(tokenFile) == "":
 		return "", errorutils.CheckErrorf("no token provided: the --token-file path is empty")
 	case tokenFileSet:
@@ -160,7 +155,7 @@ func extractToken(raw string) (string, error) {
 		tokenValue = stripTokenDecorations(input)
 	}
 	if tokenValue == "" {
-		return "", errorutils.CheckErrorf("no token provided: pass it as an argument, with --token-file=<path>, or on stdin")
+		return "", errorutils.CheckErrorf("no token provided: pass it with --token-file=<path> or on stdin")
 	}
 	if strings.ContainsAny(tokenValue, " \t\r\n") {
 		return "", errorutils.CheckErrorf("the token input contains more than one value; expected a single token")

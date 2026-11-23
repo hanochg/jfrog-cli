@@ -391,7 +391,6 @@ func getCommands() ([]cli.Command, error) {
 			Flags:        cliutils.GetCommandFlags(cliutils.AccessTokenVerify),
 			Usage:        corecommon.ResolveDescription(tokenVerifyDocs.GetDescription(), tokenVerifyDocs.GetAIDescription()),
 			HelpName:     corecommon.CreateUsage("atv", corecommon.ResolveDescription(tokenVerifyDocs.GetDescription(), tokenVerifyDocs.GetAIDescription()), tokenVerifyDocs.Usage),
-			UsageText:    tokenVerifyDocs.GetArguments(),
 			ArgsUsage:    common.CreateEnvVars(),
 			BashComplete: corecommon.CreateBashCompletionFunc(),
 			Category:     otherCategory,

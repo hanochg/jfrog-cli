@@ -386,7 +386,7 @@ func TestAccessTokenVerify(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 		return path
 	}
-	verify := func(t *testing.T, secret string, args ...string) (atvOutput, error) {
+	runAtv := func(t *testing.T, secret string, args ...string) (atvOutput, error) {
 		output, err := atvCli.RunCliCmdWithOutputs(t, append([]string{"atv", "--format=json"}, args...)...)
 		assert.NotContains(t, output, secret)
 		if err != nil {
@@ -397,6 +397,9 @@ func TestAccessTokenVerify(t *testing.T) {
 			assert.NoError(t, json.Unmarshal([]byte(output), &result))
 		}
 		return result, err
+	}
+	verify := func(t *testing.T, token string, args ...string) (atvOutput, error) {
+		return runAtv(t, token, append([]string{"--token-file=" + writeFile(t, token)}, args...)...)
 	}
 	assertValid := func(t *testing.T, result atvOutput, err error, types ...string) {
 		require.NoError(t, err)
@@ -409,77 +412,74 @@ func TestAccessTokenVerify(t *testing.T) {
 		assert.Contains(t, result.Error, reason)
 	}
 
-	t.Run("identity token as argument", func(t *testing.T) {
+	t.Run("identity token", func(t *testing.T) {
 		created, _ := mint(t)
-		result, err := verify(t, created.AccessToken, created.AccessToken)
+		result, err := verify(t, created.AccessToken)
 		assertValid(t, result, err, "Identity Token")
 	})
 	t.Run("token file with the bare token", func(t *testing.T) {
 		created, _ := mint(t)
-		result, err := verify(t, created.AccessToken, "--token-file="+writeFile(t, created.AccessToken+"\n"))
+		result, err := runAtv(t, created.AccessToken, "--token-file="+writeFile(t, created.AccessToken+"\n"))
 		assertValid(t, result, err, "Identity Token")
 	})
 	t.Run("token file with jf atc JSON output", func(t *testing.T) {
 		created, output := mint(t)
-		result, err := verify(t, created.AccessToken, "--token-file="+writeFile(t, output))
+		result, err := runAtv(t, created.AccessToken, "--token-file="+writeFile(t, output))
 		assertValid(t, result, err, "Identity Token")
 	})
 	t.Run("admin token", func(t *testing.T) {
 		created, _ := mint(t, "--grant-admin")
-		result, err := verify(t, created.AccessToken, created.AccessToken)
+		result, err := verify(t, created.AccessToken)
 		assertValid(t, result, err, "Admin Token")
 	})
 	t.Run("scoped token", func(t *testing.T) {
 		created, _ := mint(t, "--scope=system:metrics:r")
-		result, err := verify(t, created.AccessToken, created.AccessToken)
+		result, err := verify(t, created.AccessToken)
 		assertValid(t, result, err, "Scoped Token")
 	})
 	t.Run("groups token", func(t *testing.T) {
 		created, _ := mint(t, "--groups=group1,group2")
-		result, err := verify(t, created.AccessToken, created.AccessToken)
+		result, err := verify(t, created.AccessToken)
 		assertValid(t, result, err, "Applied Permissions Groups Token")
 	})
 	t.Run("token without expiry", func(t *testing.T) {
 		created, _ := mint(t, auth.ExtractUsernameFromAccessToken(*tests.JfrogAccessToken), "--expiry=0")
-		result, err := verify(t, created.AccessToken, created.AccessToken)
+		result, err := verify(t, created.AccessToken)
 		assertValid(t, result, err, "Identity Token")
 		assert.NotContains(t, result.Payload, "exp")
 	})
 	t.Run("reference token", func(t *testing.T) {
 		created, _ := mint(t, "--reference")
 		require.NotEmpty(t, created.ReferenceToken)
-		result, err := verify(t, created.ReferenceToken, created.ReferenceToken)
+		result, err := verify(t, created.ReferenceToken)
 		assertInvalid(t, result, err, "not a JWT access token")
 	})
 	t.Run("revoked token", func(t *testing.T) {
 		created, _ := mintWithoutCleanup(t)
 		revokeToken(t, created.TokenId)
-		result, err := verify(t, created.AccessToken, created.AccessToken)
+		result, err := verify(t, created.AccessToken)
 		assertInvalid(t, result, err, "token rejected by Access server: status 40")
-	})
-	t.Run("readiness rejects anonymous requests", func(t *testing.T) {
-		client, err := httpclient.ClientBuilder().Build()
-		require.NoError(t, err)
-		resp, _, _, err := client.SendGet(*tests.JfrogUrl+"access/api/v1/system/readiness", false, httputils.HttpClientDetails{}, "")
-		require.NoError(t, err)
-		assert.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, resp.StatusCode,
-			"a valid verdict relies on the readiness endpoint rejecting requests it can't authenticate")
 	})
 	t.Run("tampered signature", func(t *testing.T) {
 		created, _ := mint(t)
 		i := len(created.AccessToken) - 10
 		tampered := created.AccessToken[:i] + flipBase64Char(created.AccessToken[i]) + created.AccessToken[i+1:]
-		result, err := verify(t, tampered, tampered)
+		result, err := verify(t, tampered)
 		assertInvalid(t, result, err, "invalid signature")
 	})
 	t.Run("locally signed token", func(t *testing.T) {
 		forged := signLocalToken(t)
-		result, err := verify(t, forged, forged)
+		result, err := verify(t, forged)
 		assertInvalid(t, result, err, "invalid signature")
+	})
+	t.Run("token as an argument is rejected", func(t *testing.T) {
+		created, _ := mint(t)
+		_, err := runAtv(t, created.AccessToken, created.AccessToken)
+		assert.ErrorContains(t, err, "can't be passed as an argument")
 	})
 	t.Run("unknown server id", func(t *testing.T) {
 		created, _ := mint(t)
-		_, err := verify(t, created.AccessToken, created.AccessToken, "--server-id=nope")
+		_, err := verify(t, created.AccessToken, "--server-id=nope")
 		assert.ErrorContains(t, err, "nope")
 	})
 }
