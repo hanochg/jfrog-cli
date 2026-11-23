@@ -1,6 +1,7 @@
 package token
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,14 +26,15 @@ import (
 	"github.com/jfrog/jfrog-client-go/utils/errorutils"
 	"github.com/jfrog/jfrog-client-go/utils/log"
 	"github.com/urfave/cli"
-	"golang.org/x/term"
 )
 
 const (
-	stdinPrompt        = "Reading the access token from stdin. Paste it and press Enter (input is hidden): "
-	maxTokenInput      = 64 * 1024
-	utf8Bom            = "\xef\xbb\xbf"
-	tokenArgumentError = "the token can't be passed as an argument, because arguments are visible to other processes and kept in shell history. Pass it with --token-file=<path> or on stdin"
+	stdinPrompt          = "Reading the access token from stdin. Paste it and press Enter (input is hidden): "
+	maxTokenInput        = 64 * 1024
+	utf8Bom              = "\xef\xbb\xbf"
+	utf16LittleEndianBom = "\xff\xfe"
+	utf16BigEndianBom    = "\xfe\xff"
+	tokenArgumentError   = "the token can't be passed as an argument, because arguments are visible to other processes and kept in shell history. Pass it with --token-file=<path> or on stdin"
 )
 
 var (
@@ -56,20 +58,16 @@ func AccessTokenVerifyCmd(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	var readTerminal func(string) (string, error)
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		readTerminal = readHiddenLine
-	}
-	raw, err := readTokenInput(c.String(cliutils.TokenFile), c.IsSet(cliutils.TokenFile), os.Stdin, readTerminal)
+	raw, err := readTokenInput(c.String(cliutils.TokenFile), c.IsSet(cliutils.TokenFile), os.Stdin, terminalReader())
 	if err != nil {
 		return err
 	}
-	tokenUnderTest, err := extractToken(raw)
+	tokenUnderInvestigation, err := extractToken(raw)
 	if err != nil {
 		return err
 	}
 
-	verifyCmd := generic.NewAccessTokenVerifyCommand().SetServerDetails(serverDetails).SetToken(tokenUnderTest)
+	verifyCmd := generic.NewAccessTokenVerifyCommand().SetServerDetails(serverDetails).SetToken(tokenUnderInvestigation)
 	verifyErr := commands.Exec(verifyCmd)
 	printErr := printVerifyResult(verifyCmd.Result(), outputFormat, os.Stdout)
 	if verifyErr != nil {
@@ -78,8 +76,6 @@ func AccessTokenVerifyCmd(c *cli.Context) error {
 	return errors.Join(verifyErr, printErr)
 }
 
-// The error can quote token claims and server text, so it's escaped and logged here. Returning it would let the
-// generic error handlers print it raw, or parse it as an HTTP error and print a second JSON object.
 func verifyFailure(verifyErr error) error {
 	log.Error(escapeControlCharacters(verifyErr.Error()))
 	return coreutils.CliError{ExitCode: coreutils.ExitCodeError}
@@ -122,28 +118,8 @@ func readLimited(r io.Reader) (string, error) {
 	return string(data), nil
 }
 
-// Raw mode avoids the 1,024-byte line limit that canonical terminal mode has on macOS.
-func readHiddenLine(prompt string) (string, error) {
-	fd := int(os.Stdin.Fd())
-	state, err := term.MakeRaw(fd)
-	if err != nil {
-		return "", errorutils.CheckError(err)
-	}
-	defer func() { _ = term.Restore(fd, state) }()
-	terminal := term.NewTerminal(struct {
-		io.Reader
-		io.Writer
-	}{os.Stdin, os.Stderr}, "")
-	line, err := terminal.ReadPassword(prompt)
-	if errors.Is(err, io.EOF) {
-		_, _ = fmt.Fprint(os.Stderr, "\r\n")
-		return "", nil
-	}
-	return line, errorutils.CheckError(err)
-}
-
 func extractToken(raw string) (string, error) {
-	input := strings.TrimSpace(strings.TrimPrefix(raw, utf8Bom))
+	input := strings.TrimSpace(strings.TrimPrefix(decodeUTF16(raw), utf8Bom))
 	var tokenValue string
 	if strings.HasPrefix(input, "{") {
 		var atcOutput struct {
@@ -168,6 +144,24 @@ func extractToken(raw string) (string, error) {
 	return tokenValue, nil
 }
 
+func decodeUTF16(raw string) string {
+	var order binary.ByteOrder
+	switch {
+	case strings.HasPrefix(raw, utf16LittleEndianBom):
+		order = binary.LittleEndian
+	case strings.HasPrefix(raw, utf16BigEndianBom):
+		order = binary.BigEndian
+	default:
+		return raw
+	}
+	data := raw[2:]
+	units := make([]uint16, 0, len(data)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		units = append(units, order.Uint16([]byte(data[i:i+2])))
+	}
+	return string(utf16.Decode(units))
+}
+
 func stripTokenDecorations(input string) string {
 	if len(input) >= 2 && strings.HasPrefix(input, `"`) && strings.HasSuffix(input, `"`) {
 		input = input[1 : len(input)-1]
@@ -186,8 +180,6 @@ func jsonErrorWithoutInput(err error) string {
 	return "unexpected structure"
 }
 
-// json.Marshal leaves DEL, C1 controls and Unicode format characters (such as bidi overrides) raw. As \u escapes they
-// can't affect the terminal, and the output is still valid JSON.
 func escapeJSONControlCharacters(data string) string {
 	var b strings.Builder
 	for _, r := range data {
@@ -273,15 +265,18 @@ func payloadRows(payload map[string]interface{}, format generic.TokenFormat) [][
 		}
 		rows = append(rows, [2]string{key, formatValue(key, payload[key])})
 	}
-	if ext, ok := payload["ext"].(map[string]interface{}); ok {
+	switch ext := payload["ext"].(type) {
+	case nil:
+	case map[string]interface{}:
 		for _, key := range sortedKeys(ext) {
 			rows = append(rows, [2]string{"ext." + key, formatClaim(ext[key])})
 		}
+	default:
+		rows = append(rows, [2]string{"ext", formatClaim(ext)})
 	}
 	return rows
 }
 
-// The payload is printed even when verification fails, so its text is untrusted and must not reach the terminal raw.
 func escapeControlCharacters(s string) string {
 	var b strings.Builder
 	for _, r := range s {

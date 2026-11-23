@@ -2,6 +2,7 @@ package token
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	coreformat "github.com/jfrog/jfrog-cli-core/v2/common/format"
 	generic "github.com/jfrog/jfrog-cli-core/v2/general/token"
@@ -41,6 +43,15 @@ func TestExtractToken(t *testing.T) {
 		assert.Equal(t, "a.b.c", token, raw)
 	}
 
+	for _, raw := range []string{
+		utf16LittleEndianBom + encodeUTF16(strings.ReplaceAll(atcOutput, "\n", "\r\n"), binary.LittleEndian),
+		utf16BigEndianBom + encodeUTF16("a.b.c\r\n", binary.BigEndian),
+	} {
+		token, err := extractToken(raw)
+		require.NoError(t, err)
+		assert.Equal(t, "a.b.c", token)
+	}
+
 	for _, tc := range []struct {
 		raw     string
 		wantErr string
@@ -58,6 +69,15 @@ func TestExtractToken(t *testing.T) {
 			assert.NotContains(t, err.Error(), "a.b.c")
 		}
 	}
+}
+
+func encodeUTF16(s string, order binary.ByteOrder) string {
+	units := utf16.Encode([]rune(s))
+	data := make([]byte, 2*len(units))
+	for i, unit := range units {
+		order.PutUint16(data[2*i:], unit)
+	}
+	return string(data)
 }
 
 func TestReadTokenInput(t *testing.T) {
@@ -164,6 +184,14 @@ func TestPrintVerifyResult_Table_Valid(t *testing.T) {
 	for _, want := range []string{"sub", "UTC (epoch: 1700000000)", "ext.revocable", "TYPE", "Identity Token"} {
 		assert.Contains(t, buf.String(), want)
 	}
+}
+
+func TestPrintVerifyResult_Table_ExtThatIsNotAnObject(t *testing.T) {
+	result := sampleVerifyResult(false)
+	result.Payload["ext"] = "not-json"
+	var buf bytes.Buffer
+	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
+	assert.Regexp(t, `\next\s+not-json\n`, buf.String())
 }
 
 func TestPrintVerifyResult_Table_ReferenceToken(t *testing.T) {

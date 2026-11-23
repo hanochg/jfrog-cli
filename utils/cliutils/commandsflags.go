@@ -721,7 +721,7 @@ var flagsMap = map[string]cli.Flag{
 	},
 	TokenFile: cli.StringFlag{
 		Name:  TokenFile,
-		Usage: "[Optional] Path to a file that holds the token to verify, or the JSON output of jf atc. If neither this nor the argument is set, the token is read from stdin.` `",
+		Usage: "[Optional] Path to a file that holds the token to verify, or the JSON output of jf atc. Without it, the token is read from stdin.` `",
 	},
 	exchangeOidcTokenFormat: cli.StringFlag{
 		Name:  Format,

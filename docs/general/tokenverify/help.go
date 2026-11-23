@@ -26,10 +26,9 @@ Common patterns:
 
 Gotchas:
 - The token can't be passed as an argument, because arguments are visible to other processes and kept in shell history. Use stdin or --token-file.
-- Without --token-file, the token is read from stdin. In a terminal, it prompts and waits without echoing the input.
-- JSON input is read for its access_token value.
+- Without --token-file, the token is read from stdin. In a terminal, it prompts and waits without echoing the input. The prompt reads a single line: if the pasted text has more lines, it's all discarded, so pass multi-line input such as jf atc's JSON with --token-file or through a pipe. Terminals that can't hide input, such as Git Bash's, need --token-file or a pipe.
 - Only configured servers can be used. There's no --insecure-tls: trust a private CA by adding it to ~/.jfrog/security/certs. http:// servers work, but print a warning.
-- A value that isn't a JWT is treated as a reference token and sent to the server as is. If the server doesn't accept it, it's reported as invalid.
+- A value without dots isn't shaped like a JWT, so it's treated as a reference token and sent to the server as is. If the server doesn't accept it, it's reported as invalid. A value with dots that doesn't parse as a JWT fails locally and is never sent.
 - JSON input is read for its access_token value, so to verify the reference token from jf atc --reference output, extract reference_token first.
 - The types come from the token's scopes only, one per kind of scope, so a token can have several. Quoted scopes and the legacy member-of-groups: and api:* scopes are recognized.
 - A token is internal when it has a scope starting with internal:. Connect pairing and device scopes are reported by name, and every other internal: scope as Internal Token, next to the token's other types.
