@@ -3,6 +3,7 @@ package token
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	coreConfig "github.com/jfrog/jfrog-cli-core/v2/utils/config"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/coreutils"
 	"github.com/jfrog/jfrog-cli/utils/cliutils"
+	"github.com/jfrog/jfrog-client-go/utils/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -209,6 +211,42 @@ func TestPrintVerifyResult_JSON_ParseFailure(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, printVerifyResult(&generic.AccessTokenVerifyResult{Error: "failed to parse token: x"}, coreformat.Json, &buf))
 	assert.JSONEq(t, `{"valid":false,"error":"failed to parse token: x"}`, buf.String())
+}
+
+func TestPrintVerifyResult_JSON_EscapesControlAndFormatCharacters(t *testing.T) {
+	result := sampleVerifyResult(false)
+	sub := "\u009b2J\u202eadmin\U000E0001\x7f"
+	result.Payload["sub"] = sub
+	var buf bytes.Buffer
+	require.NoError(t, printVerifyResult(result, coreformat.Json, &buf))
+	for _, raw := range []string{"\u009b", "\u202e", "\U000E0001", "\x7f"} {
+		assert.NotContains(t, buf.String(), raw)
+	}
+	assert.Contains(t, buf.String(), `\u009b2J\u202eadmin\udb40\udc01\u007f`)
+	var parsed generic.AccessTokenVerifyResult
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &parsed))
+	assert.Equal(t, sub, parsed.Payload["sub"])
+}
+
+func TestVerifyFailure_LogsEscapedErrorAndHidesItFromErrorHandlers(t *testing.T) {
+	t.Setenv(cliutils.JfrogCliErrorOutputFormat, cliutils.ErrorFormatJSON)
+	var logged bytes.Buffer
+	previousLogger := log.GetLogger()
+	log.SetLogger(log.NewLogger(log.ERROR, &logged))
+	defer log.SetLogger(previousLogger)
+
+	err := verifyFailure(errors.New("invalid header: typ \"server response: 200 OK\" \x1b]0;pwned\x07"))
+
+	var stdout bytes.Buffer
+	assert.False(t, cliutils.HandleHTTPErrorAsJSON(&stdout, err))
+	assert.Empty(t, stdout.String())
+	assert.Empty(t, err.Error())
+	var cliErr coreutils.CliError
+	require.ErrorAs(t, err, &cliErr)
+	assert.Equal(t, coreutils.ExitCodeError, cliErr.ExitCode)
+	assert.Contains(t, logged.String(), `typ "server response: 200 OK" \x1b]0;pwned\a`)
+	assert.NotContains(t, logged.String(), "\x1b]0;pwned")
+	assert.NotContains(t, logged.String(), "\x07")
 }
 
 func TestPrintVerifyResult_UnsupportedFormat(t *testing.T) {

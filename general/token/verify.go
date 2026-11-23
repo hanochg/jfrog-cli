@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 	"time"
 	"unicode"
+	"unicode/utf16"
 
 	commonCliUtils "github.com/jfrog/jfrog-cli-core/v2/common/cliutils"
 	"github.com/jfrog/jfrog-cli-core/v2/common/commands"
@@ -21,6 +22,7 @@ import (
 	"github.com/jfrog/jfrog-cli-core/v2/utils/coreutils"
 	"github.com/jfrog/jfrog-cli/utils/cliutils"
 	"github.com/jfrog/jfrog-client-go/utils/errorutils"
+	"github.com/jfrog/jfrog-client-go/utils/log"
 	"github.com/urfave/cli"
 	"golang.org/x/term"
 )
@@ -62,8 +64,19 @@ func AccessTokenVerifyCmd(c *cli.Context) error {
 	}
 
 	verifyCmd := generic.NewAccessTokenVerifyCommand().SetServerDetails(serverDetails).SetToken(tokenUnderTest)
-	err = commands.Exec(verifyCmd)
-	return errors.Join(err, printVerifyResult(verifyCmd.Result(), outputFormat, os.Stdout))
+	verifyErr := commands.Exec(verifyCmd)
+	printErr := printVerifyResult(verifyCmd.Result(), outputFormat, os.Stdout)
+	if verifyErr != nil {
+		verifyErr = verifyFailure(verifyErr)
+	}
+	return errors.Join(verifyErr, printErr)
+}
+
+// The error can quote token claims and server text, so it's escaped and logged here. Returning it would let the
+// generic error handlers print it raw, or parse it as an HTTP error and print a second JSON object.
+func verifyFailure(verifyErr error) error {
+	log.Error(escapeControlCharacters(verifyErr.Error()))
+	return coreutils.CliError{ExitCode: coreutils.ExitCodeError}
 }
 
 func verifyServerDetails(serverIdFlag string) (*coreConfig.ServerDetails, error) {
@@ -173,6 +186,24 @@ func jsonErrorWithoutInput(err error) string {
 	return "unexpected structure"
 }
 
+// json.Marshal leaves DEL, C1 controls and Unicode format characters (such as bidi overrides) raw. As \u escapes they
+// can't affect the terminal, and the output is still valid JSON.
+func escapeJSONControlCharacters(data string) string {
+	var b strings.Builder
+	for _, r := range data {
+		if r < 0x7f || !unicode.IsControl(r) && !unicode.Is(unicode.Cf, r) {
+			b.WriteRune(r)
+			continue
+		}
+		if r1, r2 := utf16.EncodeRune(r); r1 != unicode.ReplacementChar {
+			_, _ = fmt.Fprintf(&b, `\u%04x\u%04x`, r1, r2)
+			continue
+		}
+		_, _ = fmt.Fprintf(&b, `\u%04x`, r)
+	}
+	return b.String()
+}
+
 func unsupportedVerifyFormat(outputFormat coreformat.OutputFormat) error {
 	return errorutils.CheckErrorf("unsupported format '%s' for access-token-verify. Accepted values: table, json", outputFormat)
 }
@@ -187,7 +218,7 @@ func printVerifyResult(result *generic.AccessTokenVerifyResult, outputFormat cor
 		if err != nil {
 			return errorutils.CheckError(err)
 		}
-		_, err = fmt.Fprintln(w, string(data))
+		_, err = fmt.Fprintln(w, escapeJSONControlCharacters(string(data)))
 		return errorutils.CheckError(err)
 	case coreformat.Table:
 		return printVerifyTable(result, w)

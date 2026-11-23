@@ -403,6 +403,11 @@ func TestAccessTokenVerify(t *testing.T) {
 		assert.True(t, result.Valid)
 		assert.Equal(t, types, result.Types)
 	}
+	assertInvalid := func(t *testing.T, result atvOutput, err error, reason string) {
+		require.Error(t, err)
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.Error, reason)
+	}
 
 	t.Run("identity token as argument", func(t *testing.T) {
 		created, _ := mint(t)
@@ -443,26 +448,34 @@ func TestAccessTokenVerify(t *testing.T) {
 	t.Run("reference token", func(t *testing.T) {
 		created, _ := mint(t, "--reference")
 		require.NotEmpty(t, created.ReferenceToken)
-		_, err := verify(t, created.ReferenceToken, created.ReferenceToken)
-		assert.ErrorContains(t, err, "reference token")
+		result, err := verify(t, created.ReferenceToken, created.ReferenceToken)
+		assertInvalid(t, result, err, "not a JWT access token")
 	})
 	t.Run("revoked token", func(t *testing.T) {
 		created, _ := mintWithoutCleanup(t)
 		revokeToken(t, created.TokenId)
-		_, err := verify(t, created.AccessToken, created.AccessToken)
-		assert.ErrorContains(t, err, "token rejected by Access server: status 40")
+		result, err := verify(t, created.AccessToken, created.AccessToken)
+		assertInvalid(t, result, err, "token rejected by Access server: status 40")
+	})
+	t.Run("readiness rejects anonymous requests", func(t *testing.T) {
+		client, err := httpclient.ClientBuilder().Build()
+		require.NoError(t, err)
+		resp, _, _, err := client.SendGet(*tests.JfrogUrl+"access/api/v1/system/readiness", false, httputils.HttpClientDetails{}, "")
+		require.NoError(t, err)
+		assert.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, resp.StatusCode,
+			"a valid verdict relies on the readiness endpoint rejecting requests it can't authenticate")
 	})
 	t.Run("tampered signature", func(t *testing.T) {
 		created, _ := mint(t)
 		i := len(created.AccessToken) - 10
 		tampered := created.AccessToken[:i] + flipBase64Char(created.AccessToken[i]) + created.AccessToken[i+1:]
-		_, err := verify(t, tampered, tampered)
-		assert.ErrorContains(t, err, "invalid signature")
+		result, err := verify(t, tampered, tampered)
+		assertInvalid(t, result, err, "invalid signature")
 	})
 	t.Run("locally signed token", func(t *testing.T) {
 		forged := signLocalToken(t)
-		_, err := verify(t, forged, forged)
-		assert.ErrorContains(t, err, "invalid signature")
+		result, err := verify(t, forged, forged)
+		assertInvalid(t, result, err, "invalid signature")
 	})
 	t.Run("unknown server id", func(t *testing.T) {
 		created, _ := mint(t)
