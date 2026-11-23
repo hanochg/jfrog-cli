@@ -16,7 +16,7 @@ func GetAIDescription() string {
 
 When to use:
 - Checking whether a token is still valid before using it in CI.
-- Finding out what kind of token you were given (identity, admin, groups or scoped).
+- Finding out what kind of token you were given (identity, admin, groups, roles, scoped or Connect).
 - Debugging authentication failures caused by an expired, revoked or foreign token.
 
 Prerequisites:
@@ -33,7 +33,7 @@ Gotchas:
 - JSON input is read for its access_token value.
 - Only configured servers can be used. There's no --insecure-tls: trust a private CA by adding it to ~/.jfrog/security/certs. http:// servers work, but print a warning.
 - Reference tokens can't be verified; verify the JWT access token instead.
-- Internal tokens are reported as Internal Token.
+- Internal tokens are reported as Internal Token, except Connect pairing and device tokens, which are reported by name.
 - The token is sent to the server only after its signature checks out.
 - The exit code is 1 when the token is invalid. The payload is printed even when the token is invalid.
 
