@@ -475,7 +475,7 @@ func TestAccessTokenVerify(t *testing.T) {
 		created, _ := mintWithoutCleanup(t)
 		revokeToken(t, created.TokenId)
 		result, err := verify(t, created.AccessToken)
-		assertInvalid(t, result, err, "token rejected by Access server: status 40")
+		assertInvalid(t, result, err, "token revoked: status 40")
 	})
 	t.Run("tampered signature", func(t *testing.T) {
 		created, _ := mint(t)

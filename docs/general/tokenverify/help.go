@@ -7,7 +7,7 @@ func GetDescription() string {
 }
 
 func GetAIDescription() string {
-	return `Verify a JFrog Platform access token, JWT or reference, and report its format and what kind of token it is. For a JWT, the signature is checked against the configured server's root certificate and the claims and expiry are validated. The server's GET /access/api/v1/system/version endpoint is then called with the token, and only a token the server accepts is valid. A value without dots isn't shaped like a JWT, so it's sent to GET /access/api/v1/tokens/me as a possible reference token, and its details come from the server.
+	return `Verify a JFrog Platform access token, JWT or reference, and report its format and what kind of token it is. For a JWT, the signature is checked against the configured server's root certificate and the claims and expiry are validated. The server's GET /artifactory/api/system/version endpoint is then called with the token, and only a token the server accepts is valid. A value without dots isn't shaped like a JWT, so it's sent to GET /access/api/v1/tokens/me as a possible reference token, and its details come from the server.
 
 When to use:
 - Checking whether a token is still valid before using it in CI.
@@ -32,7 +32,7 @@ Gotchas:
 - JSON input is read for its access_token value, so to verify the reference token from jf atc --reference output, extract reference_token first.
 - The types come from the token's scopes only, one per kind of scope, so a token can have several. Quoted scopes and the legacy member-of-groups: and api:* scopes are recognized.
 - A token with a scope starting with internal: has Internal Token among its types. Connect pairing, Connect device and Mission Control pairing scopes are also reported by name.
-- A JWT is sent to the server only after its signature checks out. A 401 or 403 from GET /access/api/v1/system/version means the JWT was revoked.
+- A JWT is sent to the server only after its signature checks out. A 401 or 403 from GET /artifactory/api/system/version means the JWT was revoked.
 - --format=json output has a format field: JWT or Reference. For a reference token, the payload is the token details the server returned.
 - The exit code is 1 when the token is invalid. The payload and the types its scopes claim are printed even when the token is invalid; the table then marks the types as unverified.
 
