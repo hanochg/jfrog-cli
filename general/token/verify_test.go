@@ -185,10 +185,11 @@ func TestPrintVerifyResult_Table_Valid(t *testing.T) {
 	require.NoError(t, printVerifyResult(sampleVerifyResult(true), coreformat.Table, &buf))
 	out := buf.String()
 	assert.True(t, strings.HasPrefix(out, "Valid JWT\n\n\u250c"), out)
-	for _, want := range []string{"FIELD", "VALUE", "2023-11-14 22:13:20 UTC (1700000000)", "ext.revocable", "TOKEN TYPE", "INTERNAL"} {
+	for _, want := range []string{"FIELD", "VALUE", "2023-11-14 22:13:20 UTC (1700000000)", "ext.revocable", "TOKEN TYPE"} {
 		assert.Contains(t, out, want)
 	}
-	assert.Regexp(t, `\x{2502} Identity Token\s+\x{2502} No\s+\x{2502}`, out)
+	assert.Regexp(t, `\x{2502} Identity Token \x{2502}`, out)
+	assert.NotContains(t, out, "INTERNAL")
 	assert.NotContains(t, out, "\x1b")
 }
 
@@ -269,7 +270,8 @@ func TestPrintVerifyResult_Table_Invalid(t *testing.T) {
 	out := buf.String()
 	assert.True(t, strings.HasPrefix(out, "Invalid JWT: token expired at 2023-11-14 23:13:20 UTC\n"), out)
 	assert.Contains(t, out, "sub")
-	assert.NotContains(t, out, "TOKEN TYPE")
+	assert.Contains(t, out, "TOKEN TYPE (UNVERIFIED)")
+	assert.Regexp(t, `\x{2502} Identity Token\s+\x{2502}`, out)
 }
 
 func TestPrintVerifyResult_Table_InvalidWithoutPayload(t *testing.T) {
@@ -281,13 +283,10 @@ func TestPrintVerifyResult_Table_InvalidWithoutPayload(t *testing.T) {
 
 func TestPrintVerifyResult_Table_InternalTypes(t *testing.T) {
 	result := sampleVerifyResult(true)
-	result.Types = []generic.TokenType{generic.TokenTypeConnectDevice, generic.TokenTypeInternal, generic.TokenTypeAdmin, generic.TokenTypeUnknown}
+	result.Types = []generic.TokenType{generic.TokenTypeConnectDevice, generic.TokenTypeAdmin, generic.TokenTypeUnknown, generic.TokenTypeInternal}
 	var buf bytes.Buffer
 	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
-	out := buf.String()
-	for _, row := range []string{"Connect Device Token\\s+\\x{2502} Yes", "Internal Token\\s+\\x{2502} Yes", "Admin Token\\s+\\x{2502} No", "Unknown Token Type\\s+\\x{2502} No"} {
-		assert.Regexp(t, row, out)
-	}
+	assert.Regexp(t, `(?s)Connect Device Token.*Admin Token.*Unknown Token Type.*Internal Token`, buf.String())
 }
 
 func TestPrintVerifyResult_Table_ColorsKeepEscaping(t *testing.T) {

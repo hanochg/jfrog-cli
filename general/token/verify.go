@@ -44,7 +44,6 @@ var (
 	orderedTokenDetails = []string{"token_id", "subject", "scope", "issuer", "issued_at", "expiry"}
 	epochFields         = map[string]bool{"iat": true, "issued_at": true, "last_used": true}
 	expiryFields        = map[string]bool{"exp": true, "expiry": true}
-	internalTypes       = map[generic.TokenType]bool{generic.TokenTypeInternal: true, generic.TokenTypeConnectPairing: true, generic.TokenTypeConnectDevice: true}
 	now                 = time.Now
 )
 
@@ -237,10 +236,14 @@ func printVerifyTable(result *generic.AccessTokenVerifyResult, w io.Writer) erro
 		}
 		sections = append(sections, fields.Render())
 	}
-	if result.Valid {
-		types := newVerifyTable("TOKEN TYPE", "INTERNAL")
+	if len(result.Types) > 0 {
+		typeHeader := "TOKEN TYPE"
+		if !result.Valid {
+			typeHeader = "TOKEN TYPE (UNVERIFIED)"
+		}
+		types := newVerifyTable(typeHeader)
 		for _, tokenType := range result.Types {
-			types.AppendRow(typeRow(tokenType))
+			types.AppendRow(table.Row{typeName(tokenType)})
 		}
 		sections = append(sections, types.Render())
 	}
@@ -272,16 +275,15 @@ func verdictLine(result *generic.AccessTokenVerifyResult) string {
 	return line
 }
 
-func typeRow(tokenType generic.TokenType) table.Row {
-	name := string(tokenType)
-	if tokenType == generic.TokenTypeUnknown {
-		name = coreutils.PrintComment(name)
+func typeName(tokenType generic.TokenType) string {
+	switch tokenType {
+	case generic.TokenTypeInternal:
+		return coreutils.PrintYellow(string(tokenType))
+	case generic.TokenTypeUnknown:
+		return coreutils.PrintComment(string(tokenType))
+	default:
+		return string(tokenType)
 	}
-	internal := "No"
-	if internalTypes[tokenType] {
-		internal = coreutils.PrintYellow("Yes")
-	}
-	return table.Row{name, internal}
 }
 
 type fieldRow struct {
