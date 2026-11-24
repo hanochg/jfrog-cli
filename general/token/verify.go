@@ -11,11 +11,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 	"unicode"
 	"unicode/utf16"
 
+	"github.com/jedib0t/go-pretty/v6/table"
 	commonCliUtils "github.com/jfrog/jfrog-cli-core/v2/common/cliutils"
 	"github.com/jfrog/jfrog-cli-core/v2/common/commands"
 	coreformat "github.com/jfrog/jfrog-cli-core/v2/common/format"
@@ -34,13 +34,18 @@ const (
 	utf8Bom              = "\xef\xbb\xbf"
 	utf16LittleEndianBom = "\xff\xfe"
 	utf16BigEndianBom    = "\xfe\xff"
+	maxValueWidth        = 80
+	expiryWarningWindow  = 7 * 24 * time.Hour
 	tokenArgumentError   = "the token can't be passed as an argument, because arguments are visible to other processes and kept in shell history. Pass it with --token-file=<path> or on stdin"
 )
 
 var (
 	orderedClaims       = []string{"jti", "sub", "aud", "scp", "iss", "iat", "exp"}
 	orderedTokenDetails = []string{"token_id", "subject", "scope", "issuer", "issued_at", "expiry"}
-	epochFields         = map[string]bool{"iat": true, "exp": true, "issued_at": true, "expiry": true, "last_used": true}
+	epochFields         = map[string]bool{"iat": true, "issued_at": true, "last_used": true}
+	expiryFields        = map[string]bool{"exp": true, "expiry": true}
+	internalTypes       = map[generic.TokenType]bool{generic.TokenTypeInternal: true, generic.TokenTypeConnectPairing: true, generic.TokenTypeConnectDevice: true}
+	now                 = time.Now
 )
 
 func AccessTokenVerifyCmd(c *cli.Context) error {
@@ -220,61 +225,111 @@ func printVerifyResult(result *generic.AccessTokenVerifyResult, outputFormat cor
 }
 
 func printVerifyTable(result *generic.AccessTokenVerifyResult, w io.Writer) error {
-	if result == nil || result.Payload == nil {
+	if result == nil {
 		return nil
 	}
-	if result.Format != "" {
-		_, _ = fmt.Fprintf(w, "FORMAT\n%s\n\n", result.Format)
+	sections := []string{verdictLine(result)}
+	if result.Payload != nil {
+		fields := newVerifyTable("FIELD", "VALUE")
+		fields.SetColumnConfigs([]table.ColumnConfig{{Number: 2, WidthMax: maxValueWidth}})
+		for _, row := range payloadRows(result.Payload, result.Format) {
+			fields.AppendRow(table.Row{row.key, row.value})
+		}
+		sections = append(sections, fields.Render())
 	}
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "FIELD\tVALUE")
-	for _, row := range payloadRows(result.Payload, result.Format) {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\n", escapeControlCharacters(row[0]), escapeControlCharacters(row[1]))
+	if result.Valid {
+		types := newVerifyTable("TOKEN TYPE", "INTERNAL")
+		for _, tokenType := range result.Types {
+			types.AppendRow(typeRow(tokenType))
+		}
+		sections = append(sections, types.Render())
 	}
-	if err := tw.Flush(); err != nil {
-		return errorutils.CheckError(err)
-	}
-	if !result.Valid {
-		return nil
-	}
-	_, _ = fmt.Fprintln(w, "\nTYPE")
-	for _, tokenType := range result.Types {
-		_, _ = fmt.Fprintln(w, tokenType)
-	}
-	return nil
+	_, err := fmt.Fprintln(w, strings.Join(sections, "\n\n"))
+	return errorutils.CheckError(err)
 }
 
-func payloadRows(payload map[string]interface{}, format generic.TokenFormat) [][2]string {
+func newVerifyTable(headers ...interface{}) table.Writer {
+	tw := table.NewWriter()
+	tw.SetStyle(table.StyleLight)
+	tw.AppendHeader(headers)
+	return tw
+}
+
+func verdictLine(result *generic.AccessTokenVerifyResult) string {
+	subject := "token"
+	if result.Format == generic.TokenFormatJWT {
+		subject = "JWT"
+	} else if result.Format != "" {
+		subject = string(result.Format) + " token"
+	}
+	if result.Valid {
+		return strings.TrimSpace(coreutils.PrintBold(coreutils.PrintGreen("\u2714 Valid " + subject)))
+	}
+	line := strings.TrimSpace(coreutils.PrintBold(coreutils.PrintRed("\u2716 Invalid " + subject)))
+	if result.Error != "" {
+		line += ": " + escapeControlCharacters(result.Error)
+	}
+	return line
+}
+
+func typeRow(tokenType generic.TokenType) table.Row {
+	name := string(tokenType)
+	if tokenType == generic.TokenTypeUnknown {
+		name = coreutils.PrintComment(name)
+	}
+	internal := "No"
+	if internalTypes[tokenType] {
+		internal = coreutils.PrintYellow("Yes")
+	}
+	return table.Row{name, internal}
+}
+
+type fieldRow struct {
+	key, value string
+}
+
+func payloadRows(payload map[string]interface{}, format generic.TokenFormat) []fieldRow {
 	ordered := orderedClaims
 	if format == generic.TokenFormatReference {
 		ordered = orderedTokenDetails
 	}
-	var rows [][2]string
+	var rows []fieldRow
 	for _, key := range ordered {
 		value, ok := payload[key]
 		switch {
 		case key == "exp" && !ok:
-			rows = append(rows, [2]string{key, "(no expiry)"})
+			rows = append(rows, fieldRow{fieldName(key), formatExpiry(nil)})
 		case ok:
-			rows = append(rows, [2]string{key, formatValue(key, value)})
+			rows = append(rows, fieldRow{fieldName(key), formatValue(key, value)})
 		}
 	}
 	for _, key := range sortedKeys(payload) {
 		if key == "ext" || slices.Contains(ordered, key) {
 			continue
 		}
-		rows = append(rows, [2]string{key, formatValue(key, payload[key])})
+		rows = append(rows, fieldRow{fieldName(key), formatValue(key, payload[key])})
 	}
 	switch ext := payload["ext"].(type) {
 	case nil:
 	case map[string]interface{}:
 		for _, key := range sortedKeys(ext) {
-			rows = append(rows, [2]string{"ext." + key, formatClaim(ext[key])})
+			rows = append(rows, fieldRow{coreutils.PrintComment("ext.") + fieldName(key), plainValue(formatClaim(ext[key]))})
 		}
 	default:
-		rows = append(rows, [2]string{"ext", formatClaim(ext)})
+		rows = append(rows, fieldRow{fieldName("ext"), plainValue(formatClaim(ext))})
 	}
 	return rows
+}
+
+func fieldName(key string) string {
+	return coreutils.PrintBold(escapeControlCharacters(key))
+}
+
+func plainValue(value string) string {
+	if value == "" {
+		return coreutils.PrintComment("(empty)")
+	}
+	return escapeControlCharacters(value)
 }
 
 func escapeControlCharacters(s string) string {
@@ -291,18 +346,75 @@ func escapeControlCharacters(s string) string {
 }
 
 func formatValue(key string, value interface{}) string {
-	if epochFields[key] {
+	switch {
+	case expiryFields[key]:
+		return formatExpiry(value)
+	case epochFields[key]:
 		return formatEpoch(value)
+	default:
+		return plainValue(formatClaim(value))
 	}
-	return formatClaim(value)
+}
+
+func parseEpoch(value interface{}) (int64, bool) {
+	epoch, err := strconv.ParseInt(fmt.Sprint(value), 10, 64)
+	return epoch, err == nil
 }
 
 func formatEpoch(value interface{}) string {
-	epoch, err := strconv.ParseInt(fmt.Sprint(value), 10, 64)
-	if err != nil || epoch <= 0 {
-		return formatClaim(value)
+	epoch, ok := parseEpoch(value)
+	if !ok || epoch <= 0 {
+		return plainValue(formatClaim(value))
 	}
-	return fmt.Sprintf("%s (epoch: %d)", time.Unix(epoch, 0).UTC().Format("2006-01-02 15:04:05 UTC"), epoch)
+	return epochDate(epoch) + " " + epochNumber(epoch)
+}
+
+func formatExpiry(value interface{}) string {
+	if value == nil {
+		return "never"
+	}
+	epoch, ok := parseEpoch(value)
+	switch {
+	case ok && epoch == 0:
+		return "never"
+	case !ok || epoch < 0:
+		return plainValue(formatClaim(value))
+	}
+	left := time.Unix(epoch, 0).Sub(now())
+	switch {
+	case left <= 0:
+		return coreutils.PrintRed(epochDate(epoch)) + " " + epochNumber(epoch) + " " + coreutils.PrintRed("expired")
+	case left < expiryWarningWindow:
+		return coreutils.PrintYellow(epochDate(epoch)) + " " + epochNumber(epoch) + " " + coreutils.PrintYellow("expires in "+remaining(left))
+	default:
+		return epochDate(epoch) + " " + epochNumber(epoch)
+	}
+}
+
+func epochDate(epoch int64) string {
+	return time.Unix(epoch, 0).UTC().Format("2006-01-02 15:04:05 UTC")
+}
+
+func epochNumber(epoch int64) string {
+	return coreutils.PrintComment(fmt.Sprintf("(%d)", epoch))
+}
+
+func remaining(d time.Duration) string {
+	switch {
+	case d >= 24*time.Hour:
+		return countOf(int(d/(24*time.Hour)), "day")
+	case d >= time.Hour:
+		return countOf(int(d/time.Hour), "hour")
+	default:
+		return countOf(int(d/time.Minute), "minute")
+	}
+}
+
+func countOf(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 func formatClaim(value interface{}) string {

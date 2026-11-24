@@ -9,10 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 
+	"github.com/gookit/color"
 	coreformat "github.com/jfrog/jfrog-cli-core/v2/common/format"
 	generic "github.com/jfrog/jfrog-cli-core/v2/general/token"
 	coreConfig "github.com/jfrog/jfrog-cli-core/v2/utils/config"
@@ -180,10 +183,13 @@ func sampleVerifyResult(valid bool) *generic.AccessTokenVerifyResult {
 func TestPrintVerifyResult_Table_Valid(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, printVerifyResult(sampleVerifyResult(true), coreformat.Table, &buf))
-	assert.True(t, strings.HasPrefix(buf.String(), "FORMAT\nJWT\n\nFIELD"), buf.String())
-	for _, want := range []string{"sub", "UTC (epoch: 1700000000)", "ext.revocable", "TYPE", "Identity Token"} {
-		assert.Contains(t, buf.String(), want)
+	out := buf.String()
+	assert.True(t, strings.HasPrefix(out, "Valid JWT\n\n\u250c"), out)
+	for _, want := range []string{"FIELD", "VALUE", "2023-11-14 22:13:20 UTC (1700000000)", "ext.revocable", "TOKEN TYPE", "INTERNAL"} {
+		assert.Contains(t, out, want)
 	}
+	assert.Regexp(t, `\x{2502} Identity Token\s+\x{2502} No\s+\x{2502}`, out)
+	assert.NotContains(t, out, "\x1b")
 }
 
 func TestPrintVerifyResult_Table_ExtThatIsNotAnObject(t *testing.T) {
@@ -191,7 +197,7 @@ func TestPrintVerifyResult_Table_ExtThatIsNotAnObject(t *testing.T) {
 	result.Payload["ext"] = "not-json"
 	var buf bytes.Buffer
 	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
-	assert.Regexp(t, `\next\s+not-json\n`, buf.String())
+	assert.Regexp(t, `\x{2502} ext\s+\x{2502} not-json\s+\x{2502}`, buf.String())
 }
 
 func TestPrintVerifyResult_Table_ReferenceToken(t *testing.T) {
@@ -205,6 +211,7 @@ func TestPrintVerifyResult_Table_ReferenceToken(t *testing.T) {
 			"issuer":      "jfac@01h",
 			"issued_at":   json.Number("1700000000"),
 			"expiry":      json.Number("0"),
+			"description": "",
 			"last_used":   json.Number("1700000100"),
 			"refreshable": false,
 		},
@@ -213,32 +220,91 @@ func TestPrintVerifyResult_Table_ReferenceToken(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
 	out := buf.String()
-	assert.True(t, strings.HasPrefix(out, "FORMAT\nReference\n\nFIELD"), out)
+	assert.True(t, strings.HasPrefix(out, "Valid Reference token\n"), out)
 	var keys []string
-	for _, line := range strings.Split(out, "\n")[4:12] {
-		keys = append(keys, strings.Fields(line)[0])
+	for _, line := range strings.Split(out, "\n") {
+		if fields := strings.Fields(strings.Trim(line, "\u2502 ")); len(fields) > 0 && strings.HasPrefix(line, "\u2502") {
+			keys = append(keys, fields[0])
+		}
 	}
-	assert.Equal(t, []string{"token_id", "subject", "scope", "issuer", "issued_at", "expiry", "last_used", "refreshable"}, keys)
-	assert.Contains(t, out, "2023-11-14 22:13:20 UTC (epoch: 1700000000)")
-	assert.Contains(t, out, "UTC (epoch: 1700000100)")
-	assert.Regexp(t, `expiry\s+0\n`, out)
-	assert.NotContains(t, out, "(no expiry)")
-	assert.Contains(t, out, "TYPE\nIdentity Token")
+	assert.Equal(t, []string{"FIELD", "token_id", "subject", "scope", "issuer", "issued_at", "expiry", "description", "last_used", "refreshable", "TOKEN", "Identity"}, keys)
+	assert.Contains(t, out, "2023-11-14 22:13:20 UTC (1700000000)")
+	assert.Regexp(t, `expiry\s+\x{2502} never\s`, out)
+	assert.Regexp(t, `description\s+\x{2502} \(empty\)\s`, out)
 }
 
-func TestPrintVerifyResult_Table_NoExpiry(t *testing.T) {
-	result := sampleVerifyResult(true)
-	delete(result.Payload, "exp")
-	var buf bytes.Buffer
-	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
-	assert.Contains(t, buf.String(), "(no expiry)")
+func TestPrintVerifyResult_Table_Expiry(t *testing.T) {
+	defer func(previous func() time.Time) { now = previous }(now)
+	now = func() time.Time { return time.Unix(1700000000, 0) }
+	for _, tc := range []struct {
+		exp  interface{}
+		want string
+	}{
+		{nil, "never"},
+		{json.Number("0"), "never"},
+		{json.Number("1699999999"), "expired"},
+		{json.Number("1700003600"), "expires in 1 hour"},
+		{json.Number("1700000000"), "expired"},
+		{json.Number("1700259200"), "expires in 3 days"},
+		{json.Number("1800000000"), "2027-01-15 08:00:00 UTC (1800000000)"},
+		{"soon", "soon"},
+	} {
+		result := sampleVerifyResult(true)
+		if tc.exp == nil {
+			delete(result.Payload, "exp")
+		} else {
+			result.Payload["exp"] = tc.exp
+		}
+		var buf bytes.Buffer
+		require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
+		assert.Regexp(t, `exp\s+\x{2502} [^\x{2502}]*`+regexp.QuoteMeta(tc.want), buf.String(), tc.exp)
+	}
 }
 
 func TestPrintVerifyResult_Table_Invalid(t *testing.T) {
+	result := sampleVerifyResult(false)
+	result.Error = "token expired at 2023-11-14 23:13:20 UTC"
 	var buf bytes.Buffer
-	require.NoError(t, printVerifyResult(sampleVerifyResult(false), coreformat.Table, &buf))
-	assert.Contains(t, buf.String(), "sub")
-	assert.NotContains(t, buf.String(), "TYPE")
+	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
+	out := buf.String()
+	assert.True(t, strings.HasPrefix(out, "Invalid JWT: token expired at 2023-11-14 23:13:20 UTC\n"), out)
+	assert.Contains(t, out, "sub")
+	assert.NotContains(t, out, "TOKEN TYPE")
+}
+
+func TestPrintVerifyResult_Table_InvalidWithoutPayload(t *testing.T) {
+	var buf bytes.Buffer
+	result := &generic.AccessTokenVerifyResult{Error: "failed to parse token: invalid JWT format\x1b[2J"}
+	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
+	assert.Equal(t, "Invalid token: failed to parse token: invalid JWT format\\x1b[2J\n", buf.String())
+}
+
+func TestPrintVerifyResult_Table_InternalTypes(t *testing.T) {
+	result := sampleVerifyResult(true)
+	result.Types = []generic.TokenType{generic.TokenTypeConnectDevice, generic.TokenTypeInternal, generic.TokenTypeAdmin, generic.TokenTypeUnknown}
+	var buf bytes.Buffer
+	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
+	out := buf.String()
+	for _, row := range []string{"Connect Device Token\\s+\\x{2502} Yes", "Internal Token\\s+\\x{2502} Yes", "Admin Token\\s+\\x{2502} No", "Unknown Token Type\\s+\\x{2502} No"} {
+		assert.Regexp(t, row, out)
+	}
+}
+
+func TestPrintVerifyResult_Table_ColorsKeepEscaping(t *testing.T) {
+	defer log.SetIsTerminalFlagsWithCallback(true)()
+	color.ForceOpenColor()
+	defer color.RevertColorLevel()
+	result := sampleVerifyResult(true)
+	result.Payload["sub"] = "alice\x1b]0;title\x07\x1b[8m"
+	var buf bytes.Buffer
+	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
+	out := buf.String()
+	require.Contains(t, out, "\x1b[", "colors should be on")
+	assert.Contains(t, out, "\u2714 Valid JWT")
+	assert.Contains(t, out, `alice\x1b]0;title\a\x1b[8m`)
+	withoutColors := regexp.MustCompile("\x1b\\[[0-9;]*m").ReplaceAllString(out, "")
+	assert.NotContains(t, withoutColors, "\x1b")
+	assert.NotContains(t, out, "\x07")
 }
 
 func TestPrintVerifyResult_Table_EscapesControlCharacters(t *testing.T) {
