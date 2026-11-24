@@ -464,12 +464,12 @@ func TestAccessTokenVerify(t *testing.T) {
 		created, _ := mintWithoutCleanup(t, "--reference")
 		revokeToken(t, created.TokenId)
 		result, err := verify(t, created.ReferenceToken)
-		assertInvalid(t, result, err, "didn't accept it as a reference token")
-		assert.Empty(t, result.Format)
+		assertInvalid(t, result, err, "reference token revoked: status 401")
+		assert.Equal(t, "Reference", result.Format)
 	})
 	t.Run("value that isn't a token", func(t *testing.T) {
 		result, err := verify(t, "notATokenValue")
-		assertInvalid(t, result, err, "didn't accept it as a reference token")
+		assertInvalid(t, result, err, "reference token revoked: status 401")
 	})
 	t.Run("revoked token", func(t *testing.T) {
 		created, _ := mintWithoutCleanup(t)

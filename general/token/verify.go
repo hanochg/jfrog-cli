@@ -34,6 +34,7 @@ const (
 	utf8Bom              = "\xef\xbb\xbf"
 	utf16LittleEndianBom = "\xff\xfe"
 	utf16BigEndianBom    = "\xfe\xff"
+	noReferenceDataNote  = "No token data to show: a reference token can't be parsed locally, and Access doesn't return the details of a revoked or rejected one."
 	maxValueWidth        = 80
 	expiryWarningWindow  = 7 * 24 * time.Hour
 	tokenArgumentError   = "the token can't be passed as an argument, because arguments are visible to other processes and kept in shell history. Pass it with --token-file=<path> or on stdin"
@@ -81,7 +82,9 @@ func AccessTokenVerifyCmd(c *cli.Context) error {
 }
 
 func verifyFailure(verifyErr error) error {
-	log.Error(escapeControlCharacters(verifyErr.Error()))
+	if !log.IsStdOutTerminal() {
+		log.Error(escapeControlCharacters(verifyErr.Error()))
+	}
 	return coreutils.CliError{ExitCode: coreutils.ExitCodeError}
 }
 
@@ -228,6 +231,9 @@ func printVerifyTable(result *generic.AccessTokenVerifyResult, w io.Writer) erro
 		return nil
 	}
 	sections := []string{verdictLine(result)}
+	if result.Payload == nil && result.Format == generic.TokenFormatReference {
+		sections = append(sections, coreutils.PrintComment(noReferenceDataNote))
+	}
 	if result.Payload != nil {
 		fields := newVerifyTable("FIELD", "VALUE")
 		fields.SetColumnConfigs([]table.ColumnConfig{{Number: 2, WidthMax: maxValueWidth}})
@@ -270,7 +276,8 @@ func verdictLine(result *generic.AccessTokenVerifyResult) string {
 	}
 	line := strings.TrimSpace(coreutils.PrintBold(coreutils.PrintRed("\u2716 Invalid " + subject)))
 	if result.Error != "" {
-		line += ": " + escapeControlCharacters(result.Error)
+		reason := strings.TrimPrefix(strings.TrimPrefix(result.Error, "reference "), "token ")
+		line += ": " + escapeControlCharacters(reason)
 	}
 	return line
 }

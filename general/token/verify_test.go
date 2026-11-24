@@ -268,7 +268,7 @@ func TestPrintVerifyResult_Table_Invalid(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
 	out := buf.String()
-	assert.True(t, strings.HasPrefix(out, "Invalid JWT: token expired at 2023-11-14 23:13:20 UTC\n"), out)
+	assert.True(t, strings.HasPrefix(out, "Invalid JWT: expired at 2023-11-14 23:13:20 UTC\n"), out)
 	assert.Contains(t, out, "sub")
 	assert.Contains(t, out, "TOKEN TYPE (UNVERIFIED)")
 	assert.Regexp(t, `\x{2502} Identity Token\s+\x{2502}`, out)
@@ -279,6 +279,29 @@ func TestPrintVerifyResult_Table_InvalidWithoutPayload(t *testing.T) {
 	result := &generic.AccessTokenVerifyResult{Error: "failed to parse token: invalid JWT format\x1b[2J"}
 	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
 	assert.Equal(t, "Invalid token: failed to parse token: invalid JWT format\\x1b[2J\n", buf.String())
+}
+
+func TestPrintVerifyResult_Table_RevokedReferenceToken(t *testing.T) {
+	result := &generic.AccessTokenVerifyResult{
+		Format: generic.TokenFormatReference,
+		Error:  "reference token revoked: status 401 from GET /access/api/v1/tokens/me",
+	}
+	var buf bytes.Buffer
+	require.NoError(t, printVerifyResult(result, coreformat.Table, &buf))
+	assert.Equal(t, "Invalid Reference token: revoked: status 401 from GET /access/api/v1/tokens/me\n\n"+noReferenceDataNote+"\n", buf.String())
+}
+
+func TestVerifyFailure_NotLoggedWhenStdoutIsATerminal(t *testing.T) {
+	var logged bytes.Buffer
+	previousLogger := log.GetLogger()
+	log.SetLogger(log.NewLogger(log.ERROR, &logged))
+	defer log.SetLogger(previousLogger)
+	defer log.SetIsTerminalFlagsWithCallback(true)()
+	err := verifyFailure(errors.New("reference token revoked"))
+	assert.Empty(t, logged.String())
+	var cliErr coreutils.CliError
+	require.ErrorAs(t, err, &cliErr)
+	assert.Equal(t, coreutils.ExitCodeError, cliErr.ExitCode)
 }
 
 func TestPrintVerifyResult_Table_InternalTypes(t *testing.T) {
