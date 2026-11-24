@@ -36,7 +36,6 @@ func terminalReader() func(prompt string) (string, error) {
 	}
 }
 
-// Whatever is left in the terminal after the line would otherwise reach the shell as typed input, so it's discarded.
 func readHiddenLine(prompt string) (string, error) {
 	fd := int(os.Stdin.Fd())
 	state, err := term.MakeRaw(fd)

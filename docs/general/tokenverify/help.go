@@ -22,7 +22,7 @@ Common patterns:
   $ jf atc | jf atv                                        # verify a freshly minted token
   $ jf atc --reference | jq -r .reference_token | jf atv   # verify a reference token
   $ jf atv --token-file=token.txt                          # read the token from a file
-  $ jf atv --token-file=token.txt --format=json | jq .types
+  $ jf atv --token-file=token.txt --format=json | jq 'select(.valid).types'   # types only when the token is valid
 
 Gotchas:
 - The token can't be passed as an argument, because arguments are visible to other processes and kept in shell history. Use stdin or --token-file.
@@ -32,7 +32,7 @@ Gotchas:
 - JSON input is read for its access_token value, so to verify the reference token from jf atc --reference output, extract reference_token first.
 - The types come from the token's scopes only, one per kind of scope, so a token can have several. Quoted scopes and the legacy member-of-groups: and api:* scopes are recognized.
 - A token with a scope starting with internal: has Internal Token among its types. Connect pairing, Connect device and Mission Control pairing scopes are also reported by name.
-- A JWT is sent to the server only after its signature checks out. A 401 or 403 from GET /artifactory/api/system/version means the JWT was revoked.
+- A JWT is sent to the server only after its signature checks out. A 401 or 403 from GET /artifactory/api/system/version means the JWT was revoked, or, when its aud claim doesn't include Artifactory (jfrt@ or *@), that Artifactory isn't in its audience; the token may still be valid elsewhere.
 - --format=json output has a format field: JWT or Reference. For a reference token, the payload is the token details the server returned.
 - The exit code is 1 when the token is invalid. The payload and the types its scopes claim are printed even when the token is invalid; the table then marks the types as unverified.
 
