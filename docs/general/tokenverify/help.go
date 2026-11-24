@@ -7,7 +7,7 @@ func GetDescription() string {
 }
 
 func GetAIDescription() string {
-	return `Verify a JFrog Platform access token, JWT or reference, and report its format and what kind of token it is. For a JWT, the signature is checked against the configured server's root certificate and the claims and expiry are validated. The server's GET /access/api/v1/tokens/me endpoint is then called with the token, and only a token the server accepts is valid. A value without dots isn't shaped like a JWT, so it's sent to that endpoint as a possible reference token, and its details come from the server.
+	return `Verify a JFrog Platform access token, JWT or reference, and report its format and what kind of token it is. For a JWT, the signature is checked against the configured server's root certificate and the claims and expiry are validated. The server's GET /access/api/v1/system/readiness endpoint is then called with the token, and only a token the server accepts is valid. A value without dots isn't shaped like a JWT, so it's sent to GET /access/api/v1/tokens/me as a possible reference token, and its details come from the server.
 
 When to use:
 - Checking whether a token is still valid before using it in CI.
