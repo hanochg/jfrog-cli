@@ -314,8 +314,8 @@ func TestPrintVerifyResult_Table_InternalTypes(t *testing.T) {
 
 func TestPrintVerifyResult_Table_ColorsKeepEscaping(t *testing.T) {
 	defer log.SetIsTerminalFlagsWithCallback(true)()
-	color.ForceOpenColor()
-	defer color.RevertColorLevel()
+	defer color.ForceSetColorLevel(color.TermColorLevel())
+	color.ForceSetColorLevel(color.LevelRgb)
 	result := sampleVerifyResult(true)
 	result.Payload["sub"] = "alice\x1b]0;title\x07\x1b[8m"
 	var buf bytes.Buffer
