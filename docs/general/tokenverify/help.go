@@ -11,7 +11,7 @@ func GetAIDescription() string {
 
 When to use:
 - Checking whether a token is still valid before using it in CI.
-- Finding out what kind of token you were given: a JWT or a reference token, and its types (identity, admin, groups, roles, entitlements, scoped, internal or Connect).
+- Finding out what kind of token you were given: a JWT or a reference token, and its types (identity, admin, groups, roles, entitlements, scoped, internal, Connect or Mission Control pairing).
 - Debugging authentication failures caused by an expired, revoked or foreign token.
 
 Prerequisites:
@@ -31,7 +31,7 @@ Gotchas:
 - A value without dots isn't shaped like a JWT, so it's treated as a reference token and sent to the server as is. A 401 from the server is reported as a revoked token (Access answers the same way for a value that was never a token). Only the server knows a reference token's details, so a revoked one has no data to show. A value with dots that doesn't parse as a JWT fails locally and is never sent.
 - JSON input is read for its access_token value, so to verify the reference token from jf atc --reference output, extract reference_token first.
 - The types come from the token's scopes only, one per kind of scope, so a token can have several. Quoted scopes and the legacy member-of-groups: and api:* scopes are recognized.
-- A token with a scope starting with internal: has Internal Token among its types. Connect pairing and device scopes are also reported by name.
+- A token with a scope starting with internal: has Internal Token among its types. Connect pairing, Connect device and Mission Control pairing scopes are also reported by name.
 - A JWT is sent to the server only after its signature checks out.
 - --format=json output has a format field: JWT or Reference. For a reference token, the payload is the token details the server returned.
 - The exit code is 1 when the token is invalid. The payload and the types its scopes claim are printed even when the token is invalid; the table then marks the types as unverified.
